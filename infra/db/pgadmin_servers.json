@@ -1,0 +1,22 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Ledger Dev",
+      "Group": "Apex Financial",
+      "Host": "ledger-db",
+      "Port": 5432,
+      "MaintenanceDB": "ledger",
+      "Username": "ledger",
+      "SSLMode": "prefer"
+    },
+    "2": {
+      "Name": "Ledger Test",
+      "Group": "Apex Financial",
+      "Host": "ledger-test-db",
+      "Port": 5432,
+      "MaintenanceDB": "ledger_test",
+      "Username": "ledger",
+      "SSLMode": "prefer"
+    }
+  }
+}

@@ -1,0 +1,91 @@
+version: "3.9"
+
+# ─── Apex Financial Services — Ledger Infrastructure ──────────────────────────
+# Two compose profiles:
+#   dev   → ledger-db only (fast, for normal development)
+#   tools → ledger-db + pgadmin (for visual exploration)
+#
+# Usage:
+#   docker compose up -d                         # default: dev profile
+#   docker compose --profile tools up -d         # with pgAdmin on :5050
+#   docker compose down -v                       # destroy everything incl. volumes
+
+services:
+
+  # ── Primary PostgreSQL instance ──────────────────────────────────────────────
+  ledger-db:
+    image: postgres:16-alpine
+    container_name: ledger-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger_dev_secret
+      POSTGRES_DB: ledger
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - ledger_pgdata:/var/lib/postgresql/data
+      # Initialisation scripts run in lexicographic order on first boot
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger -d ledger"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - ledger-net
+
+  # ── Dedicated test database (same image, separate volume) ────────────────────
+  ledger-test-db:
+    image: postgres:16-alpine
+    container_name: ledger-test-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger_dev_secret
+      POSTGRES_DB: ledger_test
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5433:5432"          # host:5433 → container:5432
+    volumes:
+      - ledger_test_pgdata:/var/lib/postgresql/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger -d ledger_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - ledger-net
+
+  # ── pgAdmin (optional, --profile tools) ──────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ledger-pgadmin
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: dev@apex.local
+      PGADMIN_DEFAULT_PASSWORD: pgadmin_dev
+    ports:
+      - "5050:80"
+    volumes:
+      - ledger_pgadmin:/var/lib/pgadmin
+      - ./infra/db/pgadmin_servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      ledger-db:
+        condition: service_healthy
+    networks:
+      - ledger-net
+
+volumes:
+  ledger_pgdata:
+  ledger_test_pgdata:
+  ledger_pgadmin:
+
+networks:
+  ledger-net:
+    driver: bridge
