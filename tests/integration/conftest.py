@@ -3,8 +3,9 @@ tests/integration/conftest.py
 
 Integration test fixtures — real PostgreSQL via ledger-test-db (port 5433).
 
-autouse=True clean_db truncates all tables before every test.
-This guarantees test isolation without needing separate schemas.
+All fixtures use scope="session" to share the same event loop and pool
+as the db_pool fixture. This is required on Windows where pytest-asyncio
+would otherwise create a new loop per test, breaking the session-scoped pool.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from src.event_store import EventStore
 from src.upcasting.registry import UpcasterRegistry
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True, scope="function")
 async def clean_db(db_pool):
     """Truncate all event store tables before each integration test."""
     async with db_pool.acquire() as conn:
@@ -31,7 +32,7 @@ async def clean_db(db_pool):
     yield
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="function")
 async def store(db_pool) -> EventStore:
     """Real EventStore backed by the test database."""
     registry = UpcasterRegistry()
@@ -42,7 +43,7 @@ async def store(db_pool) -> EventStore:
     )
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="function")
 async def raw_conn(db_pool):
     """Raw asyncpg connection for direct SQL queries in tests."""
     async with db_pool.acquire() as conn:
