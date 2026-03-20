@@ -42,8 +42,16 @@ def _infer_aggregate_type(stream_id: str) -> str:
     }.get(prefix, "Unknown")
 
 
+def _parse_jsonb(value: Any) -> dict:
+    """asyncpg returns JSONB as dict on Linux/Mac but as str on Windows. Handle both."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    return json.loads(value)
+
+
 def _to_stored(row: asyncpg.Record, registry: UpcasterRegistry) -> StoredEvent:
-    payload = dict(row["payload"]) if isinstance(row["payload"], dict) else json.loads(row["payload"])
     raw = StoredEvent(
         event_id        = row["event_id"],
         stream_id       = row["stream_id"],
@@ -51,8 +59,8 @@ def _to_stored(row: asyncpg.Record, registry: UpcasterRegistry) -> StoredEvent:
         global_position = row["global_position"],
         event_type      = row["event_type"],
         event_version   = row["event_version"],
-        payload         = payload,
-        metadata        = dict(row["metadata"]) if row["metadata"] else {},
+        payload         = _parse_jsonb(row["payload"]),
+        metadata        = _parse_jsonb(row["metadata"]),
         recorded_at     = row["recorded_at"],
     )
     return registry.upcast(raw)
@@ -297,7 +305,7 @@ class EventStore:
             current_version = row["current_version"],
             created_at      = row["created_at"],
             archived_at     = row["archived_at"],
-            metadata        = dict(row["metadata"]) if row["metadata"] else {},
+            metadata        = _parse_jsonb(row["metadata"]),
         )
 
     # ── archive_stream ────────────────────────────────────────────────────────
