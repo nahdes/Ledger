@@ -61,6 +61,7 @@ def make_completed(app_id: str) -> CreditAnalysisCompleted:
         model_version        = "claude-sonnet-4-20250514",
         input_data_hash      = "abc123",
         analysis_duration_ms = 1200,
+        completed_at         = utcnow(),
     )
 
 
