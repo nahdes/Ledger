@@ -228,6 +228,16 @@ class DecisionGenerated(BaseEvent):
     generated_at:               datetime
 
 
+class HumanReviewCompleted(BaseEvent):
+    event_type:      str = Field("HumanReviewCompleted", frozen=True)
+    application_id:  str
+    reviewer_id:     str
+    override:        bool
+    final_decision:  str
+    override_reason: str | None = None
+    reviewed_at:     datetime
+
+
 class ApplicationApproved(BaseEvent):
     event_type:           str = Field("ApplicationApproved", frozen=True)
     application_id:       str
