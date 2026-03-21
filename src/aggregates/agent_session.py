@@ -60,6 +60,36 @@ class AgentSessionAggregate:
             agg._apply(e)
         return agg
 
+    @classmethod
+    async def load_from_stream_id(
+        cls,
+        store: Any,
+        stream_id: str,
+    ) -> "AgentSessionAggregate":
+        """
+        Load from a full stream_id string (agent-{agent_type}-{session_id}).
+        Used by handle_generate_decision to load contributing sessions for
+        causal chain verification without knowing agent_type/session_id separately.
+        """
+        # stream_id format: agent-{agent_type}-{session_id}
+        # agent_type itself may contain hyphens (e.g. credit_analysis, fraud_detection)
+        # session_id format: sess-{type}-{hex} so we split on last occurrence of "-sess-"
+        if "-sess-" in stream_id:
+            prefix, rest = stream_id.split("-sess-", 1)
+            agent_type   = prefix.replace("agent-", "", 1)
+            session_id   = "sess-" + rest
+        else:
+            # Fallback: everything after "agent-" prefix split at last hyphen group
+            without_prefix = stream_id[len("agent-"):]
+            parts          = without_prefix.rsplit("-", 2)
+            agent_type     = parts[0] if len(parts) > 1 else without_prefix
+            session_id     = "-".join(parts[1:]) if len(parts) > 1 else ""
+        events = await store.load_stream(stream_id)
+        agg    = cls(agent_type, session_id)
+        for e in events:
+            agg._apply(e)
+        return agg
+
     def _apply(self, event: StoredEvent) -> None:
         self.version        = event.stream_position
         self.last_event_type = event.event_type
