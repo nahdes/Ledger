@@ -241,7 +241,8 @@ class TestOutboxAtomicity:
         row = await raw_conn.fetchrow(
             "SELECT payload FROM outbox WHERE published_at IS NULL ORDER BY created_at DESC LIMIT 1"
         )
-        payload = dict(row["payload"])
+        raw = row["payload"]
+        payload = dict(raw) if isinstance(raw, dict) else __import__("json").loads(raw)
         assert payload["event_type"] == "ApplicationSubmitted"
 
 

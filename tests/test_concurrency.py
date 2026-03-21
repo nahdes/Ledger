@@ -24,17 +24,51 @@ Requires: ledger-test-db running on localhost:5433
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from datetime import datetime, timezone
 
+import asyncpg
 import pytest
+import pytest_asyncio
+from dotenv import load_dotenv
 
+from src.event_store import EventStore
 from src.models.events import (
     ApplicationSubmitted,
     CreditAnalysisCompleted,
     CreditAnalysisRequested,
     OptimisticConcurrencyError,
 )
+from src.upcasting.registry import UpcasterRegistry
+
+load_dotenv()
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql://ledger:ledger_dev_secret@localhost:5433/ledger_test",
+)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clean_db(db_pool):
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            TRUNCATE TABLE outbox, events, event_streams, projection_checkpoints
+            RESTART IDENTITY CASCADE
+            """
+        )
+    yield
+
+
+@pytest_asyncio.fixture
+async def store(db_pool) -> EventStore:
+    return EventStore(
+        pool=db_pool,
+        upcaster_registry=UpcasterRegistry(),
+        outbox_destinations=["test-destination"],
+    )
 
 
 def utcnow() -> datetime:
