@@ -28,6 +28,18 @@ Two issues fixed vs. original:
       to confirm non-terminal state before writing.
     handle_compliance_check_completed added (was missing).
     handle_human_review_completed added (was missing).
+
+  STRICT VERSION SOURCING
+    expected_version on every store.append() is now sourced exclusively
+    from the aggregate's .version field set during event replay, never
+    from a separate store.stream_version() call.
+
+    Rationale: calling store.stream_version() after aggregate.load() is
+    both redundant (the load already knows the version) and unsafe — it
+    opens a TOCTOU window where a concurrent writer could advance the
+    stream between the load and the version query, causing the OCC check
+    to validate against a version that no longer matches the state the
+    business rules were evaluated against.
 """
 from __future__ import annotations
 
@@ -532,9 +544,11 @@ async def handle_human_review_completed(
             )
         )
 
-    loan_version = await store.stream_version(loan_stream)
+    # Use loan.version sourced directly from the aggregate replay —
+    # avoids a redundant DB round-trip and closes the TOCTOU window
+    # that exists when store.stream_version() is called separately.
     version = await store.append(
-        loan_stream, events_to_append, expected_version=loan_version, **_meta(cmd)
+        loan_stream, events_to_append, expected_version=loan.version, **_meta(cmd)
     )
     return {
         "loan_stream":    loan_stream,
@@ -596,8 +610,11 @@ async def handle_generate_decision(
         sessions_with_decisions=sessions_with_decisions,
     )
 
-    loan_stream  = f"loan-{cmd.application_id}"
-    loan_version = await store.stream_version(loan_stream)
+    loan_stream = f"loan-{cmd.application_id}"
+    # loan.version is the version at which we replayed the aggregate.
+    # Using it directly as expected_version means the OCC check covers
+    # exactly the state we validated against — no race between a separate
+    # store.stream_version() call and the append.
 
     events_to_append: list[Any] = [
         DecisionGenerated(
@@ -637,7 +654,7 @@ async def handle_generate_decision(
         )
 
     version = await store.append(
-        loan_stream, events_to_append, expected_version=loan_version, **meta
+        loan_stream, events_to_append, expected_version=loan.version, **meta
     )
     return {
         "loan_stream":    loan_stream,
