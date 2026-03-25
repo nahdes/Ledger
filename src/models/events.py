@@ -9,7 +9,7 @@ Event naming follows the seed data exactly:
   CreditAnalysisCompleted is event_version=2 in seed data
 """
 from __future__ import annotations
-
+from dataclasses import dataclass, field
 import enum
 from datetime import datetime
 from typing import Any
@@ -21,6 +21,9 @@ from pydantic import BaseModel, Field
 # =============================================================================
 # Exception hierarchy
 # =============================================================================
+def utcnow() -> datetime:
+    """Return current UTC timestamp."""
+    return datetime.now(timezone.utc)
 
 class LedgerError(Exception):
     """Base for all domain errors."""
@@ -552,6 +555,118 @@ class ComplianceCheckCompleted(BaseEvent):
     overall_verdict:  str   # CLEAR | BLOCKED | CONDITIONAL
     completed_at:     datetime
 
+
+class AuditIntegrityCheckRun(BaseEvent):
+    """Written to audit-{entity_type}-{entity_id} stream after each integrity check."""
+    event_type:              str = Field("AuditIntegrityCheckRun", frozen=True)
+    entity_id:               str
+    check_timestamp:         datetime
+    events_verified_count:   int
+    integrity_hash:          str
+    previous_hash:           str
+    last_checked_position:   int = 0
+    chain_valid:             bool = True
+    tamper_detected:         bool = False
+
+# ── AgentSession Events (for Gas Town pattern) ──────────────────────────────
+
+class AgentSessionStarted(BaseEvent):
+    event_type: str = Field("AgentSessionStarted", frozen=True)
+    session_id: str
+    agent_type: str
+    agent_id: str | None = None
+    application_id: str | None = None
+    model_version: str
+    context_source: str = "fresh"  # or "prior_session_replay:{session_id}"
+    context_token_count: int = 0
+    event_replay_from_position: int = 0
+    started_at: datetime = field(default_factory=utcnow)
+
+
+class AgentInputValidated(BaseEvent):
+    event_type: str = Field("AgentInputValidated", frozen=True)
+    session_id: str
+    inputs_validated: list[str]
+    validation_duration_ms: int
+    validated_at: datetime = field(default_factory=utcnow)
+
+
+class AgentInputValidationFailed(BaseEvent):
+    event_type: str = Field("AgentInputValidationFailed", frozen=True)
+    session_id: str
+    missing_inputs: list[str]
+    validation_errors: list[str]
+    failed_at: datetime = field(default_factory=utcnow)
+
+
+class AgentNodeExecuted(BaseEvent):
+    event_type: str = Field("AgentNodeExecuted", frozen=True)
+    session_id: str
+    node_name: str
+    node_sequence: int
+    input_keys: list[str]
+    output_keys: list[str]
+    llm_called: bool
+    llm_tokens_input: int | None = None
+    llm_tokens_output: int | None = None
+    llm_cost_usd: float | None = None
+    duration_ms: int
+    executed_at: datetime = field(default_factory=utcnow)
+
+
+class AgentToolCalled(BaseEvent):
+    event_type: str = Field("AgentToolCalled", frozen=True)
+    session_id: str
+    tool_name: str
+    tool_input_summary: str
+    tool_output_summary: str
+    tool_duration_ms: int
+    called_at: datetime = field(default_factory=utcnow)
+
+
+class AgentOutputWritten(BaseEvent):
+    event_type: str = Field("AgentOutputWritten", frozen=True)
+    session_id: str
+    events_written: list[dict[str, Any]]  # [{stream_id, event_type, stream_position}]
+    output_summary: str
+    written_at: datetime = field(default_factory=utcnow)
+
+
+class AgentSessionCompleted(BaseEvent):
+    event_type: str = Field("AgentSessionCompleted", frozen=True)
+    session_id: str
+    total_nodes_executed: int
+    total_llm_calls: int
+    total_tokens_used: int
+    total_cost_usd: float
+    next_agent_triggered: str | None = None
+    completed_at: datetime = field(default_factory=utcnow)
+
+
+class AgentSessionFailed(BaseEvent):  # ← THIS WAS MISSING
+    event_type: str = Field("AgentSessionFailed", frozen=True)
+    session_id: str
+    agent_type: str
+    error_type: str
+    error_message: str
+    last_successful_node: str | None = None
+    recoverable: bool = False
+    failed_at: datetime = field(default_factory=utcnow)
+
+
+class AgentSessionRecovered(BaseEvent):  # ← THIS WAS MISSING
+    event_type: str = Field("AgentSessionRecovered", frozen=True)
+    session_id: str
+    recovered_from_session_id: str
+    recovery_point: str  # node name where resumed
+    recovered_at: datetime = field(default_factory=utcnow)
+
+
+class HumanReviewRequested(BaseEvent):  # ← ALSO NEEDED FOR NARR-05
+    event_type: str = Field("HumanReviewRequested", frozen=True)
+    application_id: str
+    reason: str
+    requested_at: datetime = field(default_factory=utcnow)
 
 # =============================================================================
 # Registry: event_type → class (used by EventStore to deserialise payloads)
