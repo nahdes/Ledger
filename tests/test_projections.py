@@ -1,22 +1,20 @@
 """
 tests/test_projections.py
-
 Projection tests:
-  - ApplicationSummary updates correctly for each event type
-  - ComplianceAuditView temporal query (get_compliance_at)
-  - rebuild_from_scratch() resets checkpoint
-  - ProjectionDaemon get_lag() returns expected structure
-  - SLO: projection lag stays within bounds under concurrent load
+- ApplicationSummary updates correctly for each event type
+- ComplianceAuditView temporal query (get_compliance_at)
+- rebuild_from_scratch() resets checkpoint
+- ProjectionDaemon get_lag() returns expected structure
+- SLO: projection lag stays within bounds under concurrent load
 
 Requires: ledger-test-db running on localhost:5433
 """
-from __future__ import annotations
 
+from __future__ import annotations  # ✅ CORRECT
 import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
-
 import asyncpg
 import pytest
 import pytest_asyncio
@@ -45,6 +43,12 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql://ledger:ledger_dev_secret@localhost:5433/ledger_test",
 )
 
+# ── Self-contained db_pool fixture ────────────────────────────────────────────
+@pytest_asyncio.fixture(scope="function")
+async def db_pool():
+    pool = await asyncpg.create_pool(dsn=TEST_DATABASE_URL, min_size=2, max_size=10)
+    yield pool
+    await pool.close()
 
 @pytest_asyncio.fixture(autouse=True)
 async def clean_db(db_pool):
@@ -60,12 +64,11 @@ async def clean_db(db_pool):
         # Re-seed projection checkpoints at 0
         for name in ("ApplicationSummary", "AgentPerformanceLedger", "ComplianceAuditView"):
             await conn.execute(
-                "INSERT INTO projection_checkpoints (projection_name, last_global_position) "
+                "INSERT INTO projection_checkpoints (projection_name, last_global_position)  "
                 "VALUES ($1, 0) ON CONFLICT DO NOTHING",
                 name,
             )
     yield
-
 
 @pytest_asyncio.fixture
 async def store(db_pool) -> EventStore:
@@ -74,7 +77,6 @@ async def store(db_pool) -> EventStore:
         upcaster_registry=UpcasterRegistry(),
         outbox_destinations=["test"],
     )
-
 
 @pytest_asyncio.fixture
 async def daemon(db_pool, store) -> ProjectionDaemon:
@@ -88,26 +90,20 @@ async def daemon(db_pool, store) -> ProjectionDaemon:
         batch_size=50,
     )
 
-
 def new_app_id() -> str:
     return f"APEX-{uuid.uuid4().hex[:6].upper()}"
 
-
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
 
 async def _run_daemon_once(daemon: ProjectionDaemon) -> None:
     """Run one batch cycle manually."""
     await daemon._process_batch()
 
-
 # =============================================================================
 # ApplicationSummary projection
 # =============================================================================
-
 class TestApplicationSummaryProjection:
-
     async def test_submitted_creates_row(self, store, db_pool, daemon):
         app_id = new_app_id()
         cmd = SubmitApplicationCommand(
@@ -191,19 +187,16 @@ class TestApplicationSummaryProjection:
 
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT state, approved_amount_usd FROM application_summary "
+                "SELECT state, approved_amount_usd FROM application_summary  "
                 "WHERE application_id = $1", app_id,
             )
         assert row["state"] == "FINAL_APPROVED"
         assert float(row["approved_amount_usd"]) == 380_000.0
 
-
 # =============================================================================
 # ComplianceAuditView temporal query
 # =============================================================================
-
 class TestComplianceAuditViewTemporalQuery:
-
     async def test_current_compliance_returns_all_rules(self, store, db_pool, daemon):
         app_id     = new_app_id()
         session_id = f"sess-com-{uuid.uuid4().hex[:8]}"
@@ -287,8 +280,8 @@ class TestComplianceAuditViewTemporalQuery:
             state_then = await ComplianceAuditViewProjection.get_compliance_at(
                 app_id, snapshot_time, conn)
 
-        assert len(state_now.checks) == 2,  "Current should have 2 rules"
-        assert len(state_then.checks) == 1, "Temporal query should see only 1 rule at snapshot time"
+        assert len(state_now.checks) == 2,   "Current should have 2 rules"
+        assert len(state_then.checks) == 1,  "Temporal query should see only 1 rule at snapshot time"
         assert state_then.checks[0].rule_id == "REG-001"
 
     async def test_hard_block_sets_blocked_verdict(self, store, db_pool, daemon):
@@ -326,24 +319,21 @@ class TestComplianceAuditViewTemporalQuery:
         async with db_pool.acquire() as conn:
             # Set checkpoint to some position
             await conn.execute(
-                "UPDATE projection_checkpoints SET last_global_position = 999 "
+                "UPDATE projection_checkpoints SET last_global_position = 999  "
                 "WHERE projection_name = 'ComplianceAuditView'"
             )
             await ComplianceAuditViewProjection.rebuild_from_scratch(conn)
             row = await conn.fetchrow(
-                "SELECT last_global_position FROM projection_checkpoints "
+                "SELECT last_global_position FROM projection_checkpoints  "
                 "WHERE projection_name = 'ComplianceAuditView'"
             )
         assert row["last_global_position"] == 0, \
             "rebuild_from_scratch must reset checkpoint to 0"
 
-
 # =============================================================================
 # ProjectionDaemon lag metrics
 # =============================================================================
-
 class TestProjectionDaemonLag:
-
     async def test_get_lag_returns_expected_structure(self, daemon, store):
         # Write one event so there's something to lag against
         app_id = new_app_id()
@@ -357,7 +347,7 @@ class TestProjectionDaemonLag:
         assert "store_position"     in lag
         assert "lag_events"         in lag
         assert "lag_ms"             in lag
-        assert lag["lag_events"] >= 0
+        assert lag["lag_events"]  >= 0
 
     async def test_get_all_lags_returns_all_projections(self, daemon):
         lags = await daemon.get_all_lags()

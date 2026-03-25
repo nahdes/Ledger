@@ -1,18 +1,9 @@
-"""
-tests/integration/conftest.py
-
-Self-contained fixtures for integration tests.
-Defines its own db_pool so this directory works when run in isolation
-or as part of the full suite, regardless of asyncio scope settings.
-"""
-from __future__ import annotations
-
+"""tests/e2e/conftest.py — fixtures for end-to-end tests."""
+from __future__ import annotations  # ✓ Correct (with double underscores)
 import os
-
 import asyncpg
 import pytest_asyncio
 from dotenv import load_dotenv
-
 from src.event_store import EventStore
 from src.upcasting.registry import UpcasterRegistry
 
@@ -23,30 +14,24 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql://ledger:ledger_dev_secret@localhost:5433/ledger_test",
 )
 
-
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="function")  # ← Explicitly match pytest-asyncio setting
 async def db_pool():
     pool = await asyncpg.create_pool(dsn=TEST_DATABASE_URL, min_size=2, max_size=10)
     yield pool
     await pool.close()
 
-
 @pytest_asyncio.fixture(autouse=True)
 async def clean_db(db_pool):
-    """Truncate all event store tables before each integration test."""
+    """Truncate all event store tables before each e2e test."""
     async with db_pool.acquire() as conn:
         await conn.execute(
             """
             TRUNCATE TABLE
-                outbox,
-                events,
-                event_streams,
-                projection_checkpoints
+                outbox, events, event_streams, projection_checkpoints
             RESTART IDENTITY CASCADE
             """
         )
     yield
-
 
 @pytest_asyncio.fixture
 async def store(db_pool) -> EventStore:
@@ -54,12 +39,5 @@ async def store(db_pool) -> EventStore:
     return EventStore(
         pool=db_pool,
         upcaster_registry=UpcasterRegistry(),
-        outbox_destinations=["test-destination"],
+        outbox_destinations=["test"],
     )
-
-
-@pytest_asyncio.fixture
-async def raw_conn(db_pool):
-    """Raw asyncpg connection for direct SQL queries in tests."""
-    async with db_pool.acquire() as conn:
-        yield conn

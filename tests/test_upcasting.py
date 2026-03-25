@@ -42,6 +42,14 @@ TEST_DATABASE_URL = os.environ.get(
 )
 
 
+
+# ── Self-contained db_pool fixture ────────────────────────────────────────────
+@pytest_asyncio.fixture
+async def db_pool():
+    pool = await asyncpg.create_pool(dsn=TEST_DATABASE_URL, min_size=2, max_size=10)
+    yield pool
+    await pool.close()
+
 @pytest_asyncio.fixture(autouse=True)
 async def clean_db(db_pool):
     async with db_pool.acquire() as conn:

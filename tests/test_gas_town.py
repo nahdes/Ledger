@@ -3,14 +3,11 @@ tests/test_gas_town.py
 
 Full Gas Town crash recovery test using reconstruct_agent_context().
 
-Spec requirement:
-  "Simulated crash recovery: 5 events appended, reconstruct_agent_context()
-   called without in-memory agent, verify reconstructed context is sufficient
-   to continue correctly."
-
-Also tests NEEDS_RECONCILIATION detection for partial decisions.
+Self-contained: defines its own db_pool and store fixtures so it runs
+correctly whether invoked alone or as part of the full suite.
 
 Requires: ledger-test-db running on localhost:5433
+  docker compose up -d
 """
 from __future__ import annotations
 
@@ -18,6 +15,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 
+import asyncpg
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
@@ -38,6 +36,15 @@ TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql://ledger:ledger_dev_secret@localhost:5433/ledger_test",
 )
+
+
+# ── Self-contained fixtures ────────────────────────────────────────────────────
+
+@pytest_asyncio.fixture
+async def db_pool():
+    pool = await asyncpg.create_pool(dsn=TEST_DATABASE_URL, min_size=2, max_size=10)
+    yield pool
+    await pool.close()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -78,7 +85,7 @@ async def test_reconstruct_agent_context_after_crash(store: EventStore) -> None:
     app_id     = f"APEX-{uuid.uuid4().hex[:6].upper()}"
     stream_id  = f"agent-{agent_type}-{session_id}"
 
-    # ── Append 5 events ────────────────────────────────────────────────────────
+    # ── Append 5 events ───────────────────────────────────────────────────────
     await store.append(
         stream_id,
         [AgentSessionStarted(
@@ -137,13 +144,13 @@ async def test_reconstruct_agent_context_after_crash(store: EventStore) -> None:
     pre_crash = await store.load_stream(stream_id)
     assert len(pre_crash) == 5
 
-    # ── CRASH — destroy all in-memory state ────────────────────────────────────
+    # ── CRASH — destroy all in-memory state ───────────────────────────────────
     del agent_type, session_id, app_id
 
-    # ── Recover — parse stream_id components ──────────────────────────────────
-    parts              = stream_id.split("-", 1)
-    recovered_type     = parts[1].rsplit("-sess-", 1)[0]
-    recovered_session  = "sess-" + parts[1].rsplit("-sess-", 1)[1]
+    # ── Recover — parse agent_type and session_id back from stream_id ─────────
+    parts             = stream_id.split("-", 1)          # ["agent", "credit_analysis-sess-cre-XXXX"]
+    recovered_type    = parts[1].rsplit("-sess-", 1)[0]  # "credit_analysis"
+    recovered_session = "sess-" + parts[1].rsplit("-sess-", 1)[1]  # "sess-cre-XXXX"
 
     # ── Reconstruct from event store alone ────────────────────────────────────
     ctx: AgentContext = await reconstruct_agent_context(
@@ -158,7 +165,7 @@ async def test_reconstruct_agent_context_after_crash(store: EventStore) -> None:
         f"Model version must be recoverable, got {ctx.model_version!r}"
 
     assert ctx.session_health_status == "OK", \
-        f"No partial decisions in this session, expected OK, got {ctx.session_health_status!r}"
+        f"No partial decisions, expected OK, got {ctx.session_health_status!r}"
 
     assert len(ctx.pending_work) == 0, \
         f"No pending work expected, got: {ctx.pending_work}"
@@ -166,17 +173,18 @@ async def test_reconstruct_agent_context_after_crash(store: EventStore) -> None:
     assert ctx.total_events == 5
     assert ctx.context_text, "context_text must not be empty"
 
-    # The agent can continue — check context has enough to resume
-    assert "credit_analysis" in ctx.context_text.lower() or \
-           "validate_inputs" in ctx.context_text or \
-           "sess-cre" in ctx.context_text
+    assert (
+        "credit_analysis" in ctx.context_text.lower()
+        or "validate_inputs" in ctx.context_text
+        or "sess-cre" in ctx.context_text
+    )
 
     print(f"\n✓ Gas Town crash recovery verified")
-    print(f"  Events replayed:      {ctx.total_events}")
-    print(f"  Last position:        {ctx.last_event_position}")
-    print(f"  Model version:        {ctx.model_version}")
-    print(f"  Health status:        {ctx.session_health_status}")
-    print(f"  Context length:       {len(ctx.context_text)} chars")
+    print(f"  Events replayed:  {ctx.total_events}")
+    print(f"  Last position:    {ctx.last_event_position}")
+    print(f"  Model version:    {ctx.model_version}")
+    print(f"  Health status:    {ctx.session_health_status}")
+    print(f"  Context length:   {len(ctx.context_text)} chars")
 
 
 async def test_needs_reconciliation_detected(store: EventStore) -> None:
@@ -200,7 +208,7 @@ async def test_needs_reconciliation_detected(store: EventStore) -> None:
         )],
         expected_version=-1,
     )
-    # Write a CreditAnalysisRequested but NO CreditAnalysisCompleted
+    # CreditAnalysisRequested with NO corresponding CreditAnalysisCompleted
     await store.append(
         stream_id,
         [CreditAnalysisRequested(application_id=app_id, requested_at=utcnow())],
@@ -210,14 +218,17 @@ async def test_needs_reconciliation_detected(store: EventStore) -> None:
     ctx = await reconstruct_agent_context(store, agent_type, session_id)
 
     assert ctx.session_health_status == "NEEDS_RECONCILIATION", \
-        "Partial decision (requested but not completed) must be flagged"
+        "Partial decision must be flagged as NEEDS_RECONCILIATION"
     assert len(ctx.pending_work) > 0, \
         "pending_work must list the unresolved decision"
+
     print(f"\n✓ NEEDS_RECONCILIATION detected: {ctx.pending_work}")
 
 
 async def test_empty_session_returns_crashed_status(store: EventStore) -> None:
     """A session with no events returns CRASHED health status."""
-    ctx = await reconstruct_agent_context(store, "credit_analysis", "sess-cre-nonexistent")
+    ctx = await reconstruct_agent_context(
+        store, "credit_analysis", "sess-cre-nonexistent"
+    )
     assert ctx.session_health_status == "CRASHED"
     assert ctx.total_events == 0
