@@ -111,6 +111,7 @@ class EventStore:
                 if expected_version == -1:
                     # ── New stream ─────────────────────────────────────────────
                     try:
+                        await conn.execute("SAVEPOINT new_stream_insert")
                         await conn.execute(
                             """
                             INSERT INTO event_streams (stream_id, aggregate_type, current_version)
@@ -119,8 +120,12 @@ class EventStore:
                             stream_id,
                             _infer_aggregate_type(stream_id),
                         )
+                        await conn.execute("RELEASE SAVEPOINT new_stream_insert")
                     except asyncpg.UniqueViolationError:
                         # Race: another writer created it first → treat as OCC
+                        # Roll back to the savepoint so the transaction is no longer aborted
+                        await conn.execute("ROLLBACK TO SAVEPOINT new_stream_insert")
+                        await conn.execute("RELEASE SAVEPOINT new_stream_insert")
                         row = await conn.fetchrow(
                             "SELECT current_version FROM event_streams WHERE stream_id = $1",
                             stream_id,
