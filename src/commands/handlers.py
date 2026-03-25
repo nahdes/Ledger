@@ -502,11 +502,11 @@ async def handle_human_review_completed(
     loan        = await LoanApplicationAggregate.load(store, cmd.application_id)
     loan_stream = f"loan-{cmd.application_id}"
 
-    if loan.state != ApplicationState.PENDING_DECISION:
+    if loan.state not in (ApplicationState.PENDING_DECISION, ApplicationState.REFERRED):
         raise DomainError(
             rule    = "STATE_MACHINE",
             message = (
-                f"Human review requires PENDING_DECISION state, "
+                f"Human review requires PENDING_DECISION or REFERRED state, "
                 f"current state is {loan.state.value}"
             ),
             context = {"current_state": loan.state.value},
