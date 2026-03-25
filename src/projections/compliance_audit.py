@@ -1,13 +1,10 @@
 """
 src/projections/compliance_audit.py
-
 ComplianceAuditView projection — the regulatory read model.
 SLO: p99 < 200ms.
-
 Supports temporal queries: get_compliance_at(application_id, timestamp)
 returns the compliance state as it existed at that point in time by
 filtering on global_position (which is monotonically ordered with time).
-
 Snapshot strategy: event-count trigger. After every 50 compliance events
 for an application, a snapshot row is written to compliance_snapshots.
 On temporal queries the daemon loads the nearest snapshot before the
@@ -15,6 +12,7 @@ timestamp and replays only the delta, keeping p99 under 200ms even for
 applications with hundreds of compliance events.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -22,6 +20,22 @@ import asyncpg
 from src.projections.base import Projection
 
 SNAPSHOT_TRIGGER_COUNT = 50   # write snapshot every N compliance events per application
+
+
+def _ensure_datetime(value: Any, fallback: datetime) -> datetime:
+    """
+    Ensure value is a datetime object.
+    If value is a string (ISO format), parse it.
+    If None or invalid, return fallback.
+    """
+    if value is None:
+        return fallback
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        # Handle ISO format with 'Z' suffix
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return fallback
 
 
 @dataclass
@@ -67,7 +81,6 @@ class ComplianceAuditState:
 
 
 class ComplianceAuditViewProjection(Projection):
-
     @property
     def name(self) -> str:
         return "ComplianceAuditView"
@@ -90,6 +103,7 @@ class ComplianceAuditViewProjection(Projection):
             return
 
         if et == "ComplianceRulePassed":
+            evaluated_at = _ensure_datetime(p.get("evaluated_at"), event.recorded_at)
             await conn.execute(
                 """
                 INSERT INTO compliance_audit_view
@@ -105,11 +119,12 @@ class ComplianceAuditViewProjection(Projection):
                 p.get("rule_version", ""),
                 p.get("evidence_hash", ""),
                 p.get("evaluation_notes"),
-                p.get("evaluated_at") or event.recorded_at,
+                evaluated_at,
                 event.global_position,
             )
 
         elif et == "ComplianceRuleFailed":
+            evaluated_at = _ensure_datetime(p.get("evaluated_at"), event.recorded_at)
             await conn.execute(
                 """
                 INSERT INTO compliance_audit_view
@@ -127,11 +142,12 @@ class ComplianceAuditViewProjection(Projection):
                 p.get("failure_reason", ""),
                 bool(p.get("is_hard_block", False)),
                 p.get("evidence_hash", ""),
-                p.get("evaluated_at") or event.recorded_at,
+                evaluated_at,
                 event.global_position,
             )
 
         elif et == "ComplianceRuleNoted":
+            evaluated_at = _ensure_datetime(p.get("evaluated_at"), event.recorded_at)
             await conn.execute(
                 """
                 INSERT INTO compliance_audit_view
@@ -146,7 +162,7 @@ class ComplianceAuditViewProjection(Projection):
                 p.get("rule_name", ""),
                 p.get("rule_version", ""),
                 p.get("note_text", ""),
-                p.get("evaluated_at") or event.recorded_at,
+                evaluated_at,
                 event.global_position,
             )
 
@@ -170,14 +186,14 @@ class ComplianceAuditViewProjection(Projection):
         state = ComplianceAuditState(application_id=application_id)
         for row in rows:
             state.checks.append(ComplianceCheckRecord(
-                rule_id        = row["rule_id"],
-                rule_name      = row["rule_name"],
-                rule_version   = row["rule_version"],
-                verdict        = row["verdict"],
-                failure_reason = row["failure_reason"],
-                is_hard_block  = row["is_hard_block"],
-                evidence_hash  = row["evidence_hash"],
-                evaluated_at   = row["evaluated_at"],
+                rule_id         = row["rule_id"],
+                rule_name       = row["rule_name"],
+                rule_version    = row["rule_version"],
+                verdict         = row["verdict"],
+                failure_reason  = row["failure_reason"],
+                is_hard_block   = row["is_hard_block"],
+                evidence_hash   = row["evidence_hash"],
+                evaluated_at    = row["evaluated_at"],
                 global_position = row["global_position"],
             ))
         state.has_hard_block  = any(c.is_hard_block and c.verdict == "FAILED" for c in state.checks)
@@ -204,12 +220,11 @@ class ComplianceAuditViewProjection(Projection):
         interface required by the challenge spec.
         """
         # Find the global_position of events recorded at or before the timestamp
-        # using the events table as the authoritative ordering reference
         cutoff_position = await conn.fetchval(
             """
             SELECT COALESCE(MAX(global_position), 0)
             FROM   events
-            WHERE  recorded_at <= $1
+            WHERE  recorded_at  <= $1
             """,
             timestamp,
         )
@@ -219,7 +234,7 @@ class ComplianceAuditViewProjection(Projection):
                    is_hard_block, evidence_hash, evaluated_at, global_position
             FROM   compliance_audit_view
             WHERE  application_id = $1
-            AND    global_position <= $2
+            AND    global_position  <= $2
             ORDER  BY global_position
             """,
             application_id, cutoff_position,
