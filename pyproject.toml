@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.6",
     "python-dotenv>=1.0",
     "mcp>=1.0",
+    "google-generativeai>=0.8.6",
 ]
 
 [project.optional-dependencies]
@@ -34,8 +35,7 @@ dev = [
 # ── pytest ─────────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 asyncio_mode                       = "auto"
-asyncio_default_fixture_loop_scope = "session"
-asyncio_default_test_loop_scope    = "session"   # ← this was missing; tests must share the same loop as the pool
+asyncio_default_fixture_loop_scope = "function"
 testpaths                          = ["tests"]
 python_files                       = ["test_*.py"]
 python_classes                     = ["Test*"]
@@ -47,6 +47,8 @@ markers = [
     "integration: requires running PostgreSQL (ledger-test-db on 5433)",
     "e2e: full stack — all services must be running",
     "graded: assessed independently by evaluator",
+    "slow: tests that take longer than 1 second",
+    "narrative: one of the 5 narrative scenario tests",  # ← ADDED: narrative marker
 ]
 
 # ── coverage ───────────────────────────────────────────────────────────────────
@@ -73,3 +75,4 @@ ignore = ["E501"]
 python_version  = "3.11"
 strict          = true
 ignore_missing_imports = true
+# ← REMOVED invalid 'markers' block — mypy doesn't use pytest markers
